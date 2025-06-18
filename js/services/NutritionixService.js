@@ -1,6 +1,6 @@
 export default class NutritionixService {
-  static appId = 'YOUR_NUTR_APP_ID';
-  static apiKey = 'YOUR_NUTR_API_KEY';
+  static appId = 'ca69f130';
+  static apiKey = 'ea051360472f2b50153e34e04d3c9497';
 
   /**
    * Parse nutrition info for an ingredient line
