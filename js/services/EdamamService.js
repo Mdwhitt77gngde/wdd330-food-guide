@@ -1,54 +1,115 @@
 // js/services/EdamamService.js
-
 export default class EdamamService {
   /**
-   * Search recipes by pantry ingredients using TheMealDB.
-   * @param {string[]} pantryArr
-   * @returns {Promise<Array<{ recipe: { label: string, image: string, ingredientLines: string[] } }>>}
+   * Search recipes by pantry ingredients using TheMealDB,
+   * with name‑search and random fallbacks. Ensures up to 12 unique recipes.
    */
   static async searchRecipes(pantryArr) {
-    // TheMealDB only supports filtering by one ingredient at a time.
-    // We'll use the first pantry item.
-    const ingredient = encodeURIComponent(pantryArr[0] || '');
-    const filterUrl  = `https://www.themealdb.com/api/json/v1/1/filter.php?i=${ingredient}`;
+    console.log('searchRecipes called with pantryArr:', pantryArr);
 
-    const filterRes = await fetch(filterUrl);
-    if (!filterRes.ok) throw new Error('Failed to fetch recipe list');
-    const { meals } = await filterRes.json();
-    if (!meals) return [];  // no matching recipes
+    if (!pantryArr.length) {
+      console.warn('No pantry ingredients—fetching random recipes');
+      return this.randomRecipes(12);
+    }
 
-    // Limit to first 12 meals
-    const limited = meals.slice(0, 12);
-
-    // For each meal, fetch full details
-    const detailPromises = limited.map(m =>
-      fetch(`https://www.themealdb.com/api/json/v1/1/search.php?s=Arrabiata`)
-        .then(r => {
-          if (!r.ok) throw new Error('Failed to fetch meal details');
-          return r.json();
-        })
-        .then(json => {
-          const meal = json.meals[0];
-          // Build ingredientLines array from the 20 possible fields
-          const ingredientLines = [];
-          for (let i = 1; i <= 20; i++) {
-            const ing = meal[`strIngredient${i}`];
-            const amt = meal[`strMeasure${i}`];
-            if (ing && ing.trim()) {
-              // e.g. "2 cups Rice"
-              ingredientLines.push(`${amt.trim()} ${ing.trim()}`.trim());
-            }
-          }
-          return {
-            recipe: {
-              label: meal.strMeal,
-              image: meal.strMealThumb,
-              ingredientLines
-            }
-          };
-        })
+    // 1) filter by each ingredient
+    const idArrays = await Promise.all(
+      pantryArr.map(async ing => {
+        const url = `https://www.themealdb.com/api/json/v1/1/filter.php?i=${encodeURIComponent(ing)}`;
+        console.log('Filtering by ingredient:', ing, 'URL:', url);
+        const res = await fetch(url);
+        if (!res.ok) {
+          console.warn(`Filter failed for "${ing}"`, res.status);
+          return [];
+        }
+        const json = await res.json();
+        return json.meals ? json.meals.map(m => m.idMeal) : [];
+      })
     );
 
-    return Promise.all(detailPromises);
+    // 2) intersect
+    let common = idArrays.reduce((a, b) => a.filter(id => b.includes(id)), idArrays[0] || []);
+    console.log('Intersect IDs:', common);
+
+    // 3) fallback to first ingredient
+    if (!common.length) {
+      console.warn('No intersection—using first ingredient results');
+      common = idArrays[0] || [];
+    }
+
+    // 4) name‑search fallback
+    if (!common.length) {
+      const name = pantryArr[0];
+      const url = `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(name)}`;
+      console.log('Name‑search URL:', url);
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        common = json.meals ? json.meals.map(m => m.idMeal) : [];
+        console.log('Name‑search IDs:', common);
+      }
+    }
+
+    // 5) final random fallback
+    if (!common.length) {
+      console.warn('No matches—using random fallback');
+      return this.randomRecipes(12);
+    }
+
+    // 6) lookup details
+    const limited = common.slice(0, 12);
+    console.log('Lookup IDs:', limited);
+    const detailed = await Promise.all(limited.map(id => this._lookupMeal(id)));
+    return detailed.map(r => ({ recipe: r }));
+  }
+
+  static async _lookupMeal(id) {
+    const url = `https://www.themealdb.com/api/json/v1/1/lookup.php?i=${id}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Lookup failed for ID ${id}`);
+    const { meals } = await res.json();
+    const meal = meals[0];
+    const lines = [];
+    for (let i = 1; i <= 20; i++) {
+      const ing = meal[`strIngredient${i}`];
+      const amt = meal[`strMeasure${i}`];
+      if (ing && ing.trim()) lines.push(`${amt.trim()} ${ing.trim()}`.trim());
+    }
+    return {
+      label: meal.strMeal,
+      image: meal.strMealThumb,
+      ingredientLines: lines,
+      id: meal.idMeal
+    };
+  }
+
+  static async randomRecipes(count = 6) {
+    const seen = new Set();
+    const out  = [];
+    while (out.length < count) {
+      const res  = await fetch(`https://www.themealdb.com/api/json/v1/1/random.php`);
+      const { meals } = await res.json();
+      const m = meals[0];
+      if (seen.has(m.idMeal)) continue;
+      seen.add(m.idMeal);
+      out.push({ recipe: {
+        label: m.strMeal,
+        image: m.strMealThumb,
+        ingredientLines: ['View full recipe for details'],
+        id: m.idMeal
+      }});
+    }
+    return out;
+  }
+
+  /** 
+   * Returns an array of all category names 
+   */
+  static async categories() {
+    const url = 'https://www.themealdb.com/api/json/v1/1/categories.php';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load categories');
+    const { categories } = await res.json();
+    return categories.map(c => c.strCategory);
   }
 }
