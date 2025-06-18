@@ -15,7 +15,7 @@ export default class InterestsTagger {
       this.container.innerHTML = cats
         .map(c => `<span class="badge bg-secondary m-1 tag">${c}</span>`)
         .join('');
-      this.container.querySelectorAll('.tag').forEach(el => 
+      this.container.querySelectorAll('.tag').forEach(el =>
         el.addEventListener('click', e => {
           const txt = e.target.textContent;
           if (this.selected.has(txt)) {
